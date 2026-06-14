@@ -1,0 +1,20 @@
+[
+  {
+    "movie": "The Odyssey",
+    "city": "Kochi",
+    "targetDate": "25 Jul",
+    "theatre": "Broadway Cinemas IMAX"
+  },
+  {
+    "movie": "Avatar 3",
+    "city": "Kochi",
+    "targetDate": "26 Jul",
+    "theatre": "PVR IMAX"
+  },
+  {
+    "movie": "Inception",
+    "city": "Mumbai",
+    "targetDate": "30 Jul",
+    "theatre": "IMAX Cinemas"
+  }
+]

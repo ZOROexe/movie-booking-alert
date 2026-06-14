@@ -1,0 +1,20 @@
+[
+  {
+    "movie": "The Odyssey",
+    "city": "Coimbatore",
+    "targetDate": "FRI24",
+    "theatre": "Broadway Cinemas: Coimbatore"
+  },
+    {
+    "movie": "The Odyssey",
+    "city": "Coimbatore",
+    "targetDate": "SUN26",
+    "theatre": "Broadway Cinemas: Coimbatore"
+  },
+  {
+    "movie": "Obsession",
+    "city": "Coimbatore",
+    "targetDate": "THU18",
+    "theatre": "Broadway Cinemas: Coimbatore"
+  }
+]

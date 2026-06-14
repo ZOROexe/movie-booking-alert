@@ -1,0 +1,25 @@
+{
+  "name": "bookmyshow-booking-monitor",
+  "version": "1.0.0",
+  "description": "Monitor BookMyShow for movie booking openings and send notifications",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "keywords": [
+    "bookmyshow",
+    "booking",
+    "monitor",
+    "notification"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "playwright": "^1.48.0",
+    "nodemailer": "^6.9.7",
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1"
+  }
+}
