@@ -100,16 +100,13 @@ export async function navigateAndSelectCity(page, movieName, city = null) {
       // Continue anyway
     }
 
-    // Add extra delay to let page fully render
-    await page.waitForTimeout(3000);
-    
-    // Wait for main content to load (if possible)
+    // Add explicit wait for main content to load
     try {
       await page.waitForFunction(() => document.body.innerText.length > 100, {
         timeout: 10000,
       });
     } catch {
-      console.log(`   ⚠️  Page content check timeout`);
+      console.log(`   ⚠️  Page content verification timeout`);
     }
 
   } catch (error) {
@@ -121,7 +118,7 @@ export async function navigateAndSelectCity(page, movieName, city = null) {
  * Parse weekday and date from config
  * Supports formats: "23" or "THU23" or "THU" (extracts THU)
  * @param {string} targetDate - Date string from config
- * @returns {{weekday: string|null, date: string}}
+ * @returns {{weekday: string|null, date: string|null}}
  */
 function parseWeekdayAndDate(targetDate) {
   const weekdayPattern = /^(MON|TUE|WED|THU|FRI|SAT|SUN)/i;
@@ -129,18 +126,55 @@ function parseWeekdayAndDate(targetDate) {
   
   if (match) {
     const weekday = match[1].toUpperCase();
-    const date = targetDate.replace(weekdayPattern, '').trim();
-    return { weekday, date };
+    const dateStr = targetDate.replace(weekdayPattern, '').trim();
+    return { weekday, date: dateStr || null };
   }
   
-  return { weekday: null, date: targetDate };
+  // Check if input is just a date number (1-31)
+  const dateMatch = targetDate.match(/^\d{1,2}$/);
+  if (dateMatch) {
+    return { weekday: null, date: dateMatch[0] };
+  }
+  
+  return { weekday: null, date: null };
 }
 
 /**
- * Detect if target date button is available with weekday + date support
- * Multiple fallback strategies for resilience
+ * Check if element is interactive (button, clickable element, etc)
+ * @param {Locator} element - Element to validate
  * @param {Page} page - Playwright page object
- * @param {string} targetDate - Target date string (e.g., "23", "THU23", "THU", "25 Jul")
+ * @returns {Promise<boolean>}
+ */
+async function isInteractiveElement(element, page) {
+  try {
+    const isInteractive = await page.evaluate((el) => {
+      if (!el) return false;
+      
+      // Check if element itself is interactive
+      const tagName = (el.tagName || '').toLowerCase();
+      const role = el.getAttribute('role') || '';
+      
+      // Accept buttons, links, and elements with button/tab roles
+      return (
+        tagName === 'button' ||
+        tagName === 'a' ||
+        role === 'button' ||
+        role === 'tab' ||
+        role === 'menuitem'
+      );
+    }, await element.elementHandle().catch(() => null)).catch(() => false);
+    
+    return isInteractive;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Detect if target date button is available
+ * Simple, reliable detection with minimal validation
+ * @param {Page} page - Playwright page object
+ * @param {string} targetDate - Target date string (e.g., "23", "THU23", "THU")
  * @returns {Promise<{found: boolean, element: Locator|null}>}
  */
 export async function detectDateButton(page, targetDate) {
@@ -149,95 +183,42 @@ export async function detectDateButton(page, targetDate) {
 
     const { weekday, date } = parseWeekdayAndDate(targetDate);
 
-    // Strategy 1: Weekday + Date detection (new - for modern BookMyShow UI)
-    if (weekday && date) {
+    // Try ID selector first (most reliable)
+    if (date) {
       try {
-        console.log(`   📅 Trying weekday+date strategy: ${weekday} ${date}`);
-        
-        // Try to find the date container and then weekday within it
-        const dateContainer = page.locator('div').filter({ hasText: new RegExp(`${weekday}.*${date}`, 'i') });
-        const dateContainerCount = await dateContainer.count();
-        
-        if (dateContainerCount > 0) {
-          // Try to find the specific date button by ID or class
-          const idSelector = page.locator(`[id="${date}"]`);
-          const idCount = await idSelector.count();
-          
-          if (idCount > 0) {
-            await idSelector.first().waitFor({ timeout: 3000, state: 'visible' });
-            console.log(`   ✅ Date found using weekday+date ID strategy`);
-            return { found: true, element: idSelector.first() };
-          }
-
-          // Fallback: Find by weekday then date text within container
-          const weekdayLocator = page.getByText(weekday, { exact: true }).first();
-          await weekdayLocator.waitFor({ timeout: 2000, state: 'visible' }).catch(() => null);
-          
-          const dateLocator = page.getByText(date, { exact: true }).first();
-          await dateLocator.waitFor({ timeout: 2000, state: 'visible' });
-          
-          console.log(`   ✅ Date found using weekday+date text strategy`);
-          return { found: true, element: dateLocator };
+        const idLocator = page.locator(`[id="${date}"]`);
+        if (await idLocator.count() > 0) {
+          const element = idLocator.first();
+          await element.waitFor({ state: 'visible', timeout: 2000 });
+          console.log(`   ✅ Date found using ID selector`);
+          return { found: true, element };
         }
       } catch (error) {
-        console.log(`   ⚠️  Weekday+date strategy failed: ${error.message}`);
+        console.log(`   ⚠️  ID selector failed: ${error.message}`);
       }
     }
 
-    // Strategy 2: Date selector with both short date and full date ID formats
+    // Try button with text (common pattern)
     if (date) {
       try {
-        console.log(`   📅 Trying date selector strategies for: ${date}`);
-        
-        // Try short format ID (just the date)
-        let selector = page.locator(`[id="${date}"]`);
-        let count = await selector.count();
-        
-        if (count > 0) {
-          await selector.first().waitFor({ timeout: 3000, state: 'visible' });
-          console.log(`   ✅ Date found using short ID strategy`);
-          return { found: true, element: selector.first() };
-        }
-
-        // Try to click the date element directly via text if it has the right button structure
-        const buttonSelector = page.locator(`button:has-text("${date}")`).first();
-        const buttonCount = await buttonSelector.count();
-        
-        if (buttonCount > 0) {
-          await buttonSelector.waitFor({ timeout: 3000, state: 'visible' });
-          console.log(`   ✅ Date found using button strategy`);
-          return { found: true, element: buttonSelector };
-        }
+        const buttonLocator = page.locator(`button:has-text("${date}")`).first();
+        await buttonLocator.waitFor({ state: 'visible', timeout: 2000 });
+        console.log(`   ✅ Date found using button selector`);
+        return { found: true, element: buttonLocator };
       } catch (error) {
-        console.log(`   ⚠️  Date selector strategy failed: ${error.message}`);
+        console.log(`   ⚠️  Button selector failed: ${error.message}`);
       }
     }
 
-    // Strategy 3: Original date-only detection (legacy/fallback)
-    const dateLocators = [
-      page.locator(`text=${targetDate}`).first(),
-      page.locator(`button:has-text("${targetDate}")`).first(),
-      page.locator(`a:has-text("${targetDate}")`).first(),
-      page.getByText(targetDate, { exact: true }).first(),
-    ];
-
+    // Try text-based exact match (fallback)
     if (date) {
-      dateLocators.push(
-        page.locator(`text=${date}`).first(),
-        page.locator(`button:has-text("${date}")`).first(),
-        page.locator(`a:has-text("${date}")`).first(),
-        page.getByText(date, { exact: true }).first()
-      );
-    }
-
-    for (let i = 0; i < dateLocators.length; i++) {
       try {
-        // Check if element is visible
-        await dateLocators[i].waitFor({ timeout: 3000, state: 'visible' });
-        console.log(`   ✅ Date found using text strategy ${i + 1}`);
-        return { found: true, element: dateLocators[i] };
-      } catch {
-        // Try next strategy
+        const textLocator = page.getByText(date, { exact: true }).first();
+        await textLocator.waitFor({ state: 'visible', timeout: 2000 });
+        console.log(`   ✅ Date found using text selector`);
+        return { found: true, element: textLocator };
+      } catch (error) {
+        console.log(`   ⚠️  Text selector failed: ${error.message}`);
       }
     }
 
@@ -250,8 +231,7 @@ export async function detectDateButton(page, targetDate) {
 }
 
 /**
- * Detect if target theatre is available in the theatre list
- * Implements flexible matching: exact > case-insensitive > substring
+ * Detect if target theatre is available on the page
  * @param {Page} page - Playwright page object
  * @param {string} theatreName - Target theatre name
  * @returns {Promise<{found: boolean, element: Locator|null}>}
@@ -260,19 +240,18 @@ export async function detectTheatre(page, theatreName) {
   try {
     console.log(`   🎭 Detecting theatre: ${theatreName}...`);
 
-    // Wait for body to be ready
-    await page.waitForSelector('body', { timeout: 10000 });
-    await page.waitForTimeout(2000);
+    // Wait for body content to be available
+    await page.waitForSelector('body', { timeout: 5000 });
 
     // Get full page text
     const pageText = await page.textContent('body');
     
-    if (!pageText) {
+    if (!pageText || pageText.trim().length === 0) {
       console.log(`   ❌ Page text empty`);
       return { found: false, element: null };
     }
 
-    // Escape regex special characters
+    // Escape regex special characters and search (case-insensitive)
     const escapedName = theatreName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = new RegExp(escapedName, 'i');
 
@@ -290,7 +269,8 @@ export async function detectTheatre(page, theatreName) {
 }
 
 /**
- * Detect if at least one showtime is available for the selected date/theatre
+ * Detect if at least one showtime is available
+ * Uses strict time pattern matching and DOM validation
  * @param {Page} page - Playwright page object
  * @returns {Promise<{found: boolean, count: number}>}
  */
@@ -298,31 +278,52 @@ export async function detectShowtime(page) {
   try {
     console.log(`   ⏰ Detecting showtimes...`);
 
-    // Get body text
-    const bodyText = await page.textContent('body');
+    // Get visible text content only
+    const visibleText = await page.evaluate(() => {
+      const walker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT,
+        null,
+        false
+      );
+      
+      let text = '';
+      let node;
+      while (node = walker.nextNode()) {
+        const element = node.parentElement;
+        if (element && element.offsetHeight > 0 && element.offsetWidth > 0) {
+          text += node.textContent + ' ';
+        }
+      }
+      return text;
+    });
 
-    if (!bodyText) {
-      console.log(`   ❌ Page text empty`);
+    if (!visibleText || visibleText.trim().length < 50) {
+      console.log(`   ❌ Insufficient page content`);
       return { found: false, count: 0 };
     }
 
-    // Look for time patterns (HH:MM format)
-    const timePattern = /\d{1,2}:\d{2}\s?(AM|PM|am|pm)?/g;
-    const matches = bodyText.match(timePattern) || [];
+    // Improved regex: matches times like "7:15PM", "7:15 PM", "10:30AM", "10:30 AM"
+    const timePattern = /\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)/g;
+    const matches = visibleText.match(timePattern) || [];
 
-    // Filter out common false positives (URLs, timestamps, etc.)
-    const validMatches = matches.filter((m) => {
-      // Must have AM/PM or be in a reasonable time range
-      return m.includes('AM') || m.includes('PM') || m.includes('am') || m.includes('pm');
-    });
-
-    if (validMatches.length > 0) {
-      console.log(`   ✅ Showtimes found (count: ${validMatches.length})`);
-      return { found: true, count: validMatches.length };
+    if (matches.length === 0) {
+      console.log(`   ❌ No valid showtimes found`);
+      return { found: false, count: 0 };
     }
 
-    console.log(`   ❌ No showtimes found`);
-    return { found: false, count: 0 };
+    // Validate: check for showtime-related keywords on page
+    const showtimeKeywords = /(?:show|time|slot|booking|ticket|theatre|cinema|screen|timings)/i;
+    
+    if (!showtimeKeywords.test(visibleText)) {
+      console.log(`   ❌ Showtimes format invalid (missing context keywords)`);
+      return { found: false, count: 0 };
+    }
+
+    // Remove duplicates and count unique times
+    const uniqueTimes = [...new Set(matches)];
+    console.log(`   ✅ Showtimes found (count: ${uniqueTimes.length})`);
+    return { found: true, count: uniqueTimes.length };
   } catch (error) {
     console.error(`   Showtime detection error: ${error.message}`);
     return { found: false, count: 0 };
@@ -331,7 +332,7 @@ export async function detectShowtime(page) {
 
 /**
  * Main orchestration: Process a single watch
- * Checks date > theatre > showtimes in sequence
+ * Detection order: Date → Theatre → Showtime (fail fast if date unavailable)
  * @param {BrowserContext} context - Playwright browser context
  * @param {Object} watch - Watch configuration {movie, city, targetDate, theatre}
  * @returns {Promise<{bookingsOpen: boolean, watch: Object}>}
@@ -345,17 +346,17 @@ export async function processWatch(context, watch) {
     // Navigate to the movie page with Cloudflare bypass
     await navigateAndSelectCity(page, watch.movie, watch.city);
 
-    // Step 1: Detect theatre
-    const theatreResult = await detectTheatre(page, watch.theatre);
-    if (!theatreResult.found) {
-      console.log(`   ❌ Theatre not found`);
-      return { bookingsOpen: false, watch };
-    }
-
-    // Step 2: Detect date
+    // Step 1: Detect date first (fail fast if unavailable)
     const dateResult = await detectDateButton(page, watch.targetDate);
     if (!dateResult.found) {
       console.log(`   ❌ Date not available yet`);
+      return { bookingsOpen: false, watch };
+    }
+
+    // Step 2: Detect theatre
+    const theatreResult = await detectTheatre(page, watch.theatre);
+    if (!theatreResult.found) {
+      console.log(`   ❌ Theatre not found`);
       return { bookingsOpen: false, watch };
     }
 
@@ -415,7 +416,7 @@ export async function processAllWatches(watches) {
       const result = await processWatch(context, watch);
       results.push(result);
       
-      // Add delay between watches to avoid detection
+      // Wait between watches to appear more natural
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
 
