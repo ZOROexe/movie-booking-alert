@@ -8,10 +8,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { processAllWatches } from './services/bookingDetector.js';
-import {
-  hasNotificationBeenSent,
-  recordNotificationSent,
-} from './services/state.js';
+import { hasNotificationBeenSent } from './services/state.js';
 import { notifyBookingOpen } from './services/notificationHandler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,65 +38,74 @@ async function loadConfig() {
 
     return config;
   } catch (error) {
-    console.error(`❌ Failed to load config: ${error.message}`);
-    process.exit(1);
+    throw new Error(`Failed to load config: ${error.message}`);
   }
 }
 
 /**
  * Main execution flow
  */
-async function main() {
+export async function runMonitor() {
   console.log('\n🚀 BookMyShow Booking Monitor Started\n');
 
-  try {
-    // Load watches configuration
-    const watches = await loadConfig();
-    console.log(`📋 Loaded ${watches.length} watch(es)\n`);
+  const watches = await loadConfig();
+  console.log(`📋 Loaded ${watches.length} watch(es)\n`);
 
-    // Process all watches and detect bookings
-    const results = await processAllWatches(watches);
+  const results = await processAllWatches(watches);
+  const openBookings = results.filter((r) => r.bookingsOpen);
 
-    // Filter watches with open bookings
-    const openBookings = results.filter((r) => r.bookingsOpen);
-
-    if (openBookings.length === 0) {
-      console.log('\n✅ No bookings detected\n');
-      process.exit(0);
-    }
-
-    console.log(`\n📊 ${openBookings.length} booking(s) detected\n`);
-
-    // Check state and send notifications
-    for (const { watch } of openBookings) {
-      const { movie, targetDate, theatre } = watch;
-      const alreadyNotified = await hasNotificationBeenSent(
-        movie,
-        targetDate,
-        theatre
-      );
-
-      if (alreadyNotified) {
-        console.log(
-          `   ⏭️  Notification already sent for: ${movie} - ${targetDate} - ${theatre}`
-        );
-      } else {
-        console.log(
-          `   🔔 New booking detected: ${movie} - ${targetDate} - ${theatre}`
-        );
-
-        // Send notifications (Telegram + Email)
-        await notifyBookingOpen(watch);
-      }
-    }
-
-    console.log('\n✅ BookMyShow Booking Monitor Completed\n');
-    process.exit(0);
-  } catch (error) {
-    console.error(`\n❌ Critical error: ${error.message}\n`);
-    process.exit(1);
+  if (openBookings.length === 0) {
+    console.log('\n✅ No bookings detected\n');
+    return { watchesChecked: watches.length, bookingsDetected: 0, notified: 0 };
   }
+
+  console.log(`\n📊 ${openBookings.length} booking(s) detected\n`);
+
+  let notified = 0;
+
+  for (const { watch } of openBookings) {
+    const { movie, targetDate, theatre } = watch;
+    const alreadyNotified = await hasNotificationBeenSent(
+      movie,
+      targetDate,
+      theatre
+    );
+
+    if (alreadyNotified) {
+      console.log(
+        `   ⏭️  Notification already sent for: ${movie} - ${targetDate} - ${theatre}`
+      );
+    } else {
+      console.log(
+        `   🔔 New booking detected: ${movie} - ${targetDate} - ${theatre}`
+      );
+      await notifyBookingOpen(watch);
+      notified++;
+    }
+  }
+
+  console.log('\n✅ BookMyShow Booking Monitor Completed\n');
+  return {
+    watchesChecked: watches.length,
+    bookingsDetected: openBookings.length,
+    notified,
+  };
 }
 
-// Run main function
-main();
+const isMainModule =
+  process.argv[1] &&
+  import.meta.url === new URL(process.argv[1], import.meta.url).href;
+
+if (isMainModule) {
+  runMonitor()
+    .then((result) => {
+      if (process.env.MONITOR_JSON_RESULT === '1') {
+        console.log(`__MONITOR_RESULT__${JSON.stringify(result)}`);
+      }
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error(`\n❌ Critical error: ${error.message}\n`);
+      process.exit(1);
+    });
+}

@@ -9,18 +9,39 @@ import { chromium } from 'playwright';
  * Create browser with anti-detection headers to bypass Cloudflare
  * @returns {Promise<Browser>}
  */
+const BROWSER_LAUNCH_ARGS = [
+  '--disable-blink-features=AutomationControlled',
+  '--disable-dev-shm-usage',
+  '--no-first-run',
+  '--no-default-browser-check',
+];
+
 export async function launchBrowserWithBypass() {
-  return chromium.launch({
+  const baseOptions = {
     headless: true,
-    channel: 'chrome',
-    // Use specific args to appear more like a real browser
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--disable-dev-shm-usage',
-      '--no-first-run',
-      '--no-default-browser-check',
-    ],
-  });
+    args: BROWSER_LAUNCH_ARGS,
+  };
+
+  const channel = process.env.PLAYWRIGHT_BROWSER_CHANNEL?.trim();
+  const attempts = channel
+    ? [{ ...baseOptions, channel }]
+    : [baseOptions, { ...baseOptions, channel: 'chrome' }];
+
+  let lastError;
+
+  for (const options of attempts) {
+    const label = options.channel || 'bundled chromium';
+    try {
+      return await chromium.launch(options);
+    } catch (error) {
+      lastError = error;
+      console.log(
+        `   ⚠️  Browser launch failed (${label}): ${error.message.split('\n')[0]}`
+      );
+    }
+  }
+
+  throw lastError;
 }
 
 /**
