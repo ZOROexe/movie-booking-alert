@@ -1,135 +1,104 @@
-/**
- * Email notification service using Nodemailer
- * Sends notifications via Gmail with App Password and exponential backoff retry
- */
+import { Resend } from 'resend';
 
-import nodemailer from 'nodemailer';
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-/**
- * Create and return a Nodemailer transporter
- * Uses Gmail SMTP with App Password authentication
- * @returns {Transporter} Nodemailer transporter instance
- */
-function createTransporter() {
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-  });
-}
-
-/**
- * Format booking notification as HTML
- * @param {Object} watch - Watch object {movie, targetDate, theatre}
- * @returns {string} HTML formatted message
- */
 function formatEmailHtml(watch) {
   const { movie, targetDate, theatre } = watch;
+  const bookingUrl = process.env.MOVIE_URL;
+
   return `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #2c3e50;">🎬 Bookings Open!</h2>
-      
-      <div style="background-color: #ecf0f1; padding: 20px; border-radius: 8px; margin: 20px 0;">
-        <p style="margin: 8px 0;"><strong>Movie:</strong> ${movie}</p>
-        <p style="margin: 8px 0;"><strong>Date:</strong> ${targetDate}</p>
-        <p style="margin: 8px 0;"><strong>Theatre:</strong> ${theatre}</p>
+  <div style="background:#f4f6f8;padding:40px 20px;font-family:Arial,sans-serif;">
+    <div style="max-width:600px;margin:auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 8px 25px rgba(0,0,0,0.08);">
+
+      <div style="background:#e53935;padding:30px;text-align:center;color:white;">
+        <h1 style="margin:0;font-size:28px;">🎬 Bookings Open!</h1>
+        <p style="margin-top:10px;font-size:15px;opacity:0.9;">
+          Your tracked movie is now available.
+        </p>
       </div>
-      
-      <p>
-        <a href="https://in.bookmyshow.com" style="background-color: #e74c3c; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;">
-          Book Now on BookMyShow
-        </a>
-      </p>
-      
-      <hr style="border: none; border-top: 1px solid #bdc3c7; margin: 30px 0;" />
-      <p style="color: #7f8c8d; font-size: 12px;">
-        This is an automated notification from BookMyShow Booking Monitor.
-      </p>
+
+      <div style="padding:30px;">
+        <table style="width:100%;border-collapse:collapse;">
+          <tr>
+            <td style="padding:12px 0;color:#666;font-weight:bold;">Movie</td>
+            <td style="padding:12px 0;color:#222;">${movie}</td>
+          </tr>
+
+          <tr>
+            <td style="padding:12px 0;color:#666;font-weight:bold;">Date</td>
+            <td style="padding:12px 0;color:#222;">${targetDate}</td>
+          </tr>
+
+          <tr>
+            <td style="padding:12px 0;color:#666;font-weight:bold;">Theatre</td>
+            <td style="padding:12px 0;color:#222;">${theatre}</td>
+          </tr>
+        </table>
+
+        <div style="text-align:center;margin-top:35px;">
+          <a
+            href="${bookingUrl}"
+            style="
+              background:#e53935;
+              color:white;
+              text-decoration:none;
+              padding:14px 28px;
+              border-radius:8px;
+              font-size:16px;
+              font-weight:bold;
+              display:inline-block;
+            "
+          >
+            🎟️ Book Now on BookMyShow
+          </a>
+        </div>
+
+        <hr style="margin:35px 0;border:none;border-top:1px solid #ececec;" />
+
+        <p style="font-size:13px;color:#888;text-align:center;">
+          Generated automatically by BookMyShow Booking Monitor.
+        </p>
+      </div>
     </div>
+  </div>
   `;
 }
 
-/**
- * Format booking notification as plain text
- * @param {Object} watch - Watch object {movie, targetDate, theatre}
- * @returns {string} Plain text formatted message
- */
 function formatEmailText(watch) {
-  const { movie, targetDate, theatre } = watch;
-  return `🎬 Bookings Open!
+  return `
+🎬 BOOKINGS OPEN!
 
-Movie: ${movie}
-Date: ${targetDate}
-Theatre: ${theatre}
+Movie: ${watch.movie}
+Date: ${watch.targetDate}
+Theatre: ${watch.theatre}
 
-Book now on BookMyShow.
-Visit: https://in.bookmyshow.com`;
+Book now:
+${process.env.MOVIE_URL}
+`;
 }
 
-/**
- * Retry a function with exponential backoff
- * @param {Function} fn - Function to retry
- * @param {number} maxRetries - Maximum number of retries
- * @returns {Promise<any>} Result of the function
- */
-async function retryWithBackoff(fn, maxRetries = 3) {
-  let lastError;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-      if (attempt < maxRetries) {
-        const delay = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
-        console.log(
-          `   ⏳ Email retry ${attempt}/${maxRetries} - waiting ${delay / 1000}s...`
-        );
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  }
-
-  throw lastError;
-}
-
-/**
- * Send notification via Email (Gmail + App Password)
- * @param {Object} watch - Watch object {movie, targetDate, theatre}
- * @returns {Promise<{success: boolean, error: string|null}>}
- */
 export async function sendEmailNotification(watch) {
-  const emailUser = process.env.EMAIL_USER;
-  const emailPass = process.env.EMAIL_PASS;
-
-  if (!emailUser || !emailPass) {
-    console.error(
-      '   ❌ Email: EMAIL_USER or EMAIL_PASS not configured'
-    );
-    return { success: false, error: 'Missing email credentials' };
-  }
-
   try {
-    const transporter = createTransporter();
-
-    await retryWithBackoff(async () => {
-      await transporter.sendMail({
-        from: emailUser,
-        to: emailUser,
-        subject: `🎬 BookMyShow Booking Alert: ${watch.movie}`,
-        html: formatEmailHtml(watch),
-        text: formatEmailText(watch),
-      });
+    await resend.emails.send({
+      from: 'onboarding@resend.dev',
+      to: process.env.EMAIL_USER,
+      subject: `🎬 Bookings Open • ${watch.movie}`,
+      html: formatEmailHtml(watch),
+      text: formatEmailText(watch),
     });
 
-    console.log(`   ✅ Email notification sent`);
-    return { success: true, error: null };
+    console.log('   ✅ Email notification sent');
+
+    return {
+      success: true,
+      error: null,
+    };
   } catch (error) {
-    console.error(
-      `   ❌ Email notification failed: ${error.message}`
-    );
-    return { success: false, error: error.message };
+    console.error(`   ❌ Email failed: ${error.message}`);
+
+    return {
+      success: false,
+      error: error.message,
+    };
   }
 }

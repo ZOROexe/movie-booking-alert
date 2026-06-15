@@ -22,6 +22,7 @@ async function loadConfig() {
   try {
     // const data = await fs.readFile(CONFIG_FILE, 'utf-8');
     const config = JSON.parse(process.env.WATCH_CONFIG);
+    // const config = JSON.parse(data);
 
     if (!Array.isArray(config)) {
       throw new Error('config.json must be an array of watch objects');
